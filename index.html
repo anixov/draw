@@ -173,6 +173,21 @@
     }
   }
 
+  // --- Undo history (up to 40 snapshots) ---
+  const MAX_UNDO = 40;
+  const history = [];
+
+  function saveSnapshot() {
+    history.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
+    if (history.length > MAX_UNDO) history.shift();
+  }
+
+  function undo() {
+    if (!history.length) return;
+    ctx.putImageData(history.pop(), 0, 0);
+    setColor();
+  }
+
   // --- Pointer handling (stylus/mouse only) ---
   let lastX = 0, lastY = 0, isDown = false;
 
@@ -182,6 +197,7 @@
     canvas.setPointerCapture(e.pointerId);
     isDown = true;
     lastX = e.clientX; lastY = e.clientY;
+    saveSnapshot(); // snapshot before each stroke
     stampCircle(Math.round(lastX * dpr), Math.round(lastY * dpr),
                 Math.max(0, Math.round((sizes[tool] * dpr) / 2)));
   }
@@ -205,6 +221,52 @@
   canvas.addEventListener('pointermove',   pointerMove, { passive: false });
   canvas.addEventListener('pointerup',     pointerUp,   { passive: false });
   canvas.addEventListener('pointercancel', pointerUp,   { passive: false });
+
+  // --- Two-finger tap to undo ---
+  // Track active touch points; if 2 land close together in time with no drag → undo
+  const activeTouches = new Map();
+  let twoFingerTimer = null;
+
+  canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    for (const t of e.changedTouches) activeTouches.set(t.identifier, { x: t.clientX, y: t.clientY });
+    if (activeTouches.size === 2) {
+      twoFingerTimer = setTimeout(() => { twoFingerTimer = null; }, 300);
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchmove', e => {
+    e.preventDefault();
+    // If fingers move significantly, cancel the tap
+    for (const t of e.changedTouches) {
+      const start = activeTouches.get(t.identifier);
+      if (start) {
+        const dx = t.clientX - start.x, dy = t.clientY - start.y;
+        if (Math.sqrt(dx*dx + dy*dy) > 10) {
+          clearTimeout(twoFingerTimer); twoFingerTimer = null;
+        }
+      }
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchend', e => {
+    e.preventDefault();
+    for (const t of e.changedTouches) activeTouches.delete(t.identifier);
+    if (activeTouches.size === 0 && twoFingerTimer !== null) {
+      clearTimeout(twoFingerTimer); twoFingerTimer = null;
+      undo();
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchcancel', e => {
+    for (const t of e.changedTouches) activeTouches.delete(t.identifier);
+    clearTimeout(twoFingerTimer); twoFingerTimer = null;
+  }, { passive: false });
+
+  // --- X key: toggle tool ---
+  document.addEventListener('keydown', e => {
+    if (e.key === 'x' || e.key === 'X') switchTool(tool === DRAW ? ERASE : DRAW);
+  });
 
   // --- Tool buttons ---
   function switchTool(t) {
