@@ -1,10 +1,9 @@
 <!DOCTYPE html>
+
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-fullscreen">
 <title>Draw</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -64,51 +63,43 @@
   'use strict';
 
   const canvas = document.getElementById('c');
-  const ctx = canvas.getContext('2d', { willReadFrequently: false, alpha: false });
+  // desynchronized: true — bypasses the browser compositor, draws directly to screen
+  const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
 
-  // Tools
-  const DRAW  = 0;
-  const ERASE = 1;
+  const DRAW = 0, ERASE = 1;
   let tool = DRAW;
+  let dpr = 1;
 
-  // Resize: match device pixels exactly
+  // Work entirely in device pixels — no ctx transform, no scale()
+  // Convert CSS coords to device pixels inline (single multiply, no matrix math)
   function resize() {
-    const dpr = window.devicePixelRatio || 1;
-    const w = window.innerWidth;
-    const h = window.innerHeight;
-    // Save current drawing
-    let saved = null;
-    if (canvas.width > 0 && canvas.height > 0) {
-      saved = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    }
-    canvas.width  = Math.round(w * dpr);
-    canvas.height = Math.round(h * dpr);
-    ctx.scale(dpr, dpr);
-    // Fill background
+    dpr = window.devicePixelRatio || 1;
+    const w = window.innerWidth, h = window.innerHeight;
+    const pw = Math.round(w * dpr), ph = Math.round(h * dpr);
+    const saved = (canvas.width > 0 && canvas.height > 0)
+      ? ctx.getImageData(0, 0, canvas.width, canvas.height) : null;
+    canvas.width  = pw;
+    canvas.height = ph;
+    // No ctx.scale() — identity transform, draw at raw device pixels
     ctx.fillStyle = '#808080';
-    ctx.fillRect(0, 0, w, h);
-    // Restore drawing if any
+    ctx.fillRect(0, 0, pw, ph);
     if (saved) ctx.putImageData(saved, 0, 0);
+    setColor();
   }
 
-  // Draw or erase a single 1×1 CSS pixel (which may be multiple device pixels)
-  // We floor to get crisp pixel-aligned marks
-  function mark(x, y) {
-    const px = Math.floor(x);
-    const py = Math.floor(y);
-    ctx.fillStyle = (tool === DRAW) ? '#000000' : '#808080';
-    ctx.fillRect(px, py, 1, 1);
+  // Cache fillStyle — only change it on tool switch, not per stroke
+  function setColor() {
+    ctx.fillStyle = tool === DRAW ? '#000000' : '#808080';
   }
 
-  // Bresenham line between two points to avoid gaps during fast movement
+  // Bresenham in device pixels
   function line(x0, y0, x1, y1) {
-    x0 = Math.floor(x0); y0 = Math.floor(y0);
-    x1 = Math.floor(x1); y1 = Math.floor(y1);
+    // Convert CSS → device pixels
+    x0 = Math.round(x0 * dpr); y0 = Math.round(y0 * dpr);
+    x1 = Math.round(x1 * dpr); y1 = Math.round(y1 * dpr);
     const dx = Math.abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
     const dy = -Math.abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
     let err = dx + dy;
-    const color = (tool === DRAW) ? '#000000' : '#808080';
-    ctx.fillStyle = color;
     while (true) {
       ctx.fillRect(x0, y0, 1, 1);
       if (x0 === x1 && y0 === y1) break;
@@ -118,72 +109,61 @@
     }
   }
 
-  // Track last position for line interpolation
-  let lastX = null, lastY = null;
-  let isDown = false;
+  let lastX = 0, lastY = 0, isDown = false;
 
   function pointerDown(e) {
-    // Only respond to stylus (pen) or mouse; ignore fingers if stylus present
     if (e.pointerType === 'touch') return;
     e.preventDefault();
+    canvas.setPointerCapture(e.pointerId); // lock events to canvas, no hit-test delay
     isDown = true;
-    lastX = e.clientX;
-    lastY = e.clientY;
-    mark(lastX, lastY);
+    lastX = e.clientX; lastY = e.clientY;
+    ctx.fillRect(Math.round(lastX * dpr), Math.round(lastY * dpr), 1, 1);
   }
 
   function pointerMove(e) {
     if (!isDown) return;
     e.preventDefault();
-    // Use getCoalescedEvents for sub-frame precision if available
-    const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
-    for (const ev of events) {
+    const evts = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+    for (const ev of evts) {
       line(lastX, lastY, ev.clientX, ev.clientY);
-      lastX = ev.clientX;
-      lastY = ev.clientY;
+      lastX = ev.clientX; lastY = ev.clientY;
     }
   }
 
   function pointerUp(e) {
     if (e.pointerType === 'touch') return;
     isDown = false;
-    lastX = null;
-    lastY = null;
   }
 
-  canvas.addEventListener('pointerdown', pointerDown, { passive: false });
-  canvas.addEventListener('pointermove', pointerMove, { passive: false });
-  canvas.addEventListener('pointerup',   pointerUp,   { passive: false });
-  canvas.addEventListener('pointerout',  pointerUp,   { passive: false });
-  canvas.addEventListener('pointercancel', pointerUp, { passive: false });
+  canvas.addEventListener('pointerdown',   pointerDown, { passive: false });
+  canvas.addEventListener('pointermove',   pointerMove, { passive: false });
+  canvas.addEventListener('pointerup',     pointerUp,   { passive: false });
+  canvas.addEventListener('pointercancel', pointerUp,   { passive: false });
 
-  // Toolbar
   const btnDraw  = document.getElementById('btn-draw');
   const btnErase = document.getElementById('btn-erase');
 
-  btnDraw.addEventListener('pointerdown', function(e) {
+  btnDraw.addEventListener('pointerdown', e => {
     e.stopPropagation();
-    tool = DRAW;
+    tool = DRAW; setColor();
     btnDraw.classList.add('active');
     btnErase.classList.remove('active');
   });
-
-  btnErase.addEventListener('pointerdown', function(e) {
+  btnErase.addEventListener('pointerdown', e => {
     e.stopPropagation();
-    tool = ERASE;
+    tool = ERASE; setColor();
     btnErase.classList.add('active');
     btnDraw.classList.remove('active');
   });
 
-  // Prevent context menu and default gestures
-  document.addEventListener('contextmenu', e => e.preventDefault());
+  document.addEventListener('contextmenu',  e => e.preventDefault());
   document.addEventListener('gesturestart', e => e.preventDefault());
-  document.addEventListener('gesturechange', e => e.preventDefault());
+  document.addEventListener('gesturechange',e => e.preventDefault());
 
-  // Init
   window.addEventListener('resize', resize);
   resize();
 })();
 </script>
+
 </body>
 </html>
