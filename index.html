@@ -173,18 +173,28 @@
     }
   }
 
-  // --- Undo history (up to 40 snapshots) ---
+  // --- Undo / Redo history (up to 40 snapshots each) ---
   const MAX_UNDO = 40;
   const history = [];
+  const redoStack = [];
 
   function saveSnapshot() {
     history.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
     if (history.length > MAX_UNDO) history.shift();
+    redoStack.length = 0; // new stroke clears redo
   }
 
   function undo() {
     if (!history.length) return;
+    redoStack.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
     ctx.putImageData(history.pop(), 0, 0);
+    setColor();
+  }
+
+  function redo() {
+    if (!redoStack.length) return;
+    history.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
+    ctx.putImageData(redoStack.pop(), 0, 0);
     setColor();
   }
 
@@ -193,17 +203,21 @@
 
   function pointerDown(e) {
     if (e.pointerType === 'touch') return;
+    // Stylus proximity events have pressure 0 — ignore until actual contact
+    if (e.pointerType === 'pen' && e.pressure === 0) return;
     e.preventDefault();
     canvas.setPointerCapture(e.pointerId);
     isDown = true;
     lastX = e.clientX; lastY = e.clientY;
-    saveSnapshot(); // snapshot before each stroke
+    saveSnapshot();
     stampCircle(Math.round(lastX * dpr), Math.round(lastY * dpr),
                 Math.max(0, Math.round((sizes[tool] * dpr) / 2)));
   }
 
   function pointerMove(e) {
     if (!isDown) return;
+    // Also guard mid-stroke if pressure drops to 0 (hover after lift)
+    if (e.pointerType === 'pen' && e.pressure === 0) { isDown = false; return; }
     e.preventDefault();
     const evts = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
     for (const ev of evts) {
@@ -223,20 +237,29 @@
   canvas.addEventListener('pointercancel', pointerUp,   { passive: false });
 
   // --- Two-finger tap → undo / Three-finger tap → redo ---
+  // Fingers don't always land simultaneously, so we track the peak count
+  // across a 400ms window and act when all fingers lift.
   const activeTouches = new Map();
-  let tapFingerCount = 0; // max fingers seen in this gesture
+  let tapFingerCount = 0;
+  let tapWindowOpen = false;
   let tapTimer = null;
   let tapCancelled = false;
 
   canvas.addEventListener('touchstart', e => {
     e.preventDefault();
-    for (const t of e.changedTouches) activeTouches.set(t.identifier, { x: t.clientX, y: t.clientY });
+    for (const t of e.changedTouches) {
+      activeTouches.set(t.identifier, { x: t.clientX, y: t.clientY });
+    }
     tapFingerCount = Math.max(tapFingerCount, activeTouches.size);
-    // Reset tap window on first finger down
-    if (activeTouches.size === 1) {
+
+    if (!tapWindowOpen) {
+      tapWindowOpen = true;
       tapCancelled = false;
       clearTimeout(tapTimer);
-      tapTimer = setTimeout(() => { tapCancelled = true; }, 350);
+      tapTimer = setTimeout(() => {
+        tapCancelled = true;
+        tapWindowOpen = false;
+      }, 400);
     }
   }, { passive: false });
 
@@ -246,7 +269,7 @@
       const start = activeTouches.get(t.identifier);
       if (start) {
         const dx = t.clientX - start.x, dy = t.clientY - start.y;
-        if (Math.sqrt(dx*dx + dy*dy) > 12) { tapCancelled = true; }
+        if (dx*dx + dy*dy > 144) tapCancelled = true; // 12px threshold
       }
     }
   }, { passive: false });
@@ -255,10 +278,10 @@
     e.preventDefault();
     for (const t of e.changedTouches) activeTouches.delete(t.identifier);
     if (activeTouches.size === 0) {
-      clearTimeout(tapTimer); tapTimer = null;
+      clearTimeout(tapTimer); tapTimer = null; tapWindowOpen = false;
       if (!tapCancelled) {
         if      (tapFingerCount === 2) undo();
-        else if (tapFingerCount === 3) redo();
+        else if (tapFingerCount >= 3)  redo();
       }
       tapFingerCount = 0;
       tapCancelled = false;
@@ -268,7 +291,7 @@
   canvas.addEventListener('touchcancel', e => {
     for (const t of e.changedTouches) activeTouches.delete(t.identifier);
     clearTimeout(tapTimer); tapTimer = null;
-    tapFingerCount = 0; tapCancelled = true;
+    tapFingerCount = 0; tapCancelled = true; tapWindowOpen = false;
   }, { passive: false });
 
   // --- X key: toggle tool ---
