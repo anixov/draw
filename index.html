@@ -1,390 +1,162 @@
 <!DOCTYPE html>
-
-<html lang="en">
+<html>
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Draw</title>
+<meta charset="utf-8">
+<title>FastDraw Web</title>
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { width: 100%; height: 100%; overflow: hidden; background: #808080; touch-action: none; }
-  canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: crosshair; image-rendering: pixelated; image-rendering: crisp-edges; }
-  #toolbar {
-    position: fixed;
-    bottom: 24px;
-    left: 50%;
-    transform: translateX(-50%);
-    display: flex;
-    gap: 12px;
-    background: rgba(0,0,0,0.55);
-    border-radius: 40px;
-    padding: 8px 16px;
-    align-items: center;
-    user-select: none;
-    -webkit-user-select: none;
-    z-index: 10;
-  }
-  .tool-btn {
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    border: 2px solid transparent;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: border-color 0.1s;
-    -webkit-tap-highlight-color: transparent;
-    background: none;
-    padding: 0;
-  }
-  .tool-btn.active { border-color: #fff; }
-  .tool-btn svg { pointer-events: none; }
-  #sizer {
-    position: fixed;
-    right: 16px;
-    top: 0;
-    bottom: 0;
-    width: 56px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 10;
-    touch-action: none;
-    -webkit-user-select: none;
-    user-select: none;
-  }
-  #sizer-track {
-    position: relative;
-    width: 6px;
-    height: 80vh;
-    background: rgba(255,255,255,0.2);
-    border-radius: 3px;
-  }
-  #sizer-fill {
-    position: absolute;
-    bottom: 0; left: 0; right: 0;
-    background: rgba(255,255,255,0.7);
-    border-radius: 3px;
-    pointer-events: none;
-  }
-  #sizer-thumb {
-    position: absolute;
-    left: 50%;
-    transform: translate(-50%, 50%);
-    width: 44px;
-    height: 44px;
-    border-radius: 50%;
-    background: #fff;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
-    pointer-events: none;
-  }
+body {
+  margin: 0;
+  overflow: hidden;
+  background: #808080;
+}
+
+#canvas {
+  touch-action: none;
+  display: block;
+}
+
+#slider {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: rotate(-90deg) translateY(-50%);
+  transform-origin: right top;
+}
 </style>
 </head>
 <body>
-<canvas id="c"></canvas>
-<div id="sizer">
-  <div id="sizer-track">
-    <div id="sizer-fill"></div>
-    <div id="sizer-thumb"></div>
-  </div>
-</div>
-<div id="toolbar">
-  <button class="tool-btn active" id="btn-draw" title="Draw" aria-label="Draw">
-    <svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M3 19L7.5 14.5M7.5 14.5L16.5 5.5C17.3 4.7 18.5 4.7 19.3 5.5C20.1 6.3 20.1 7.5 19.3 8.3L10.3 17.3L7.5 14.5Z" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-    </svg>
-  </button>
-  <button class="tool-btn" id="btn-erase" title="Erase" aria-label="Erase">
-    <svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <rect x="3" y="10" width="10" height="8" rx="1" stroke="white" stroke-width="1.6"/>
-      <path d="M3 18h16M13 10l6-6M13 14l6-6" stroke="white" stroke-width="1.6" stroke-linecap="round"/>
-    </svg>
-  </button>
-</div>
+
+<canvas id="canvas"></canvas>
+<input id="slider" type="range" min="1" max="700" value="20">
 
 <script>
-(function() {
-  'use strict';
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
 
-  const canvas = document.getElementById('c');
-  const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
-  ctx.imageSmoothingEnabled = false;
+let width, height;
+function resize() {
+  width = canvas.width = window.innerWidth;
+  height = canvas.height = window.innerHeight;
 
-  const DRAW = 0, ERASE = 1;
-  let tool = DRAW;
-  let dpr = 1;
-  const sizes = [1, 1]; // per-tool size in CSS pixels
+  ctx.fillStyle = "#808080";
+  ctx.fillRect(0, 0, width, height);
+}
+resize();
+window.addEventListener("resize", resize);
 
-  // --- Resize ---
-  function resize() {
-    dpr = window.devicePixelRatio || 1;
-    const w = window.innerWidth, h = window.innerHeight;
-    const pw = Math.round(w * dpr), ph = Math.round(h * dpr);
-    const saved = (canvas.width > 0 && canvas.height > 0)
-      ? ctx.getImageData(0, 0, canvas.width, canvas.height) : null;
-    canvas.width  = pw;
-    canvas.height = ph;
-    ctx.imageSmoothingEnabled = false;
-    ctx.fillStyle = '#808080';
-    ctx.fillRect(0, 0, pw, ph);
-    if (saved) ctx.putImageData(saved, 0, 0);
-    setColor();
+ctx.imageSmoothingEnabled = false;
+
+let drawing = false;
+let lastPoint = null;
+
+let brushSize = 20;
+let isErasing = false;
+
+const strokes = [];
+let currentStroke = null;
+let redoStack = [];
+
+const slider = document.getElementById("slider");
+slider.oninput = () => brushSize = slider.value;
+
+// 🔲 Draw pixel-sharp circle
+function drawCircle(x, y, size, erase) {
+  ctx.fillStyle = erase ? "#808080" : "#000000";
+  ctx.beginPath();
+  ctx.arc(Math.round(x), Math.round(y), size/2, 0, Math.PI*2);
+  ctx.fill();
+}
+
+// ✏️ Interpolation
+function interpolate(x1, y1, x2, y2) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const dist = Math.hypot(dx, dy);
+
+  const step = Math.max(1, brushSize * 0.25);
+  const steps = Math.floor(dist / step);
+
+  for (let i = 0; i <= steps; i++) {
+    const t = i / (steps || 1);
+    drawCircle(x1 + dx*t, y1 + dy*t, brushSize, isErasing);
+
+    currentStroke.points.push({
+      x: x1 + dx*t,
+      y: y1 + dy*t
+    });
+  }
+}
+
+// 🖊 Pointer events (Apple Pencil works)
+canvas.addEventListener("pointerdown", e => {
+  drawing = true;
+  lastPoint = {x: e.clientX, y: e.clientY};
+
+  currentStroke = {
+    points: [],
+    size: brushSize,
+    erase: isErasing
+  };
+
+  redoStack = [];
+});
+
+canvas.addEventListener("pointermove", e => {
+  if (!drawing) return;
+
+  const p = {x: e.clientX, y: e.clientY};
+
+  interpolate(lastPoint.x, lastPoint.y, p.x, p.y);
+
+  lastPoint = p;
+});
+
+canvas.addEventListener("pointerup", () => {
+  drawing = false;
+  strokes.push(currentStroke);
+
+  if (strokes.length > 40) strokes.shift();
+});
+
+// ⌨️ Toggle brush/eraser
+window.addEventListener("keydown", e => {
+  if (e.key.toLowerCase() === "x") {
+    isErasing = !isErasing;
   }
 
-  function setColor() {
-    ctx.fillStyle = tool === DRAW ? '#000000' : '#808080';
-  }
+  if (e.metaKey && e.key === "z") undo();
+  if (e.metaKey && e.key === "y") redo();
+});
 
-  // --- Filled pixel-perfect circle (midpoint / scanline) ---
-  // Draws into device pixels. cx, cy, r all in device pixels.
-  function stampCircle(cx, cy, r) {
-    if (r <= 0) { ctx.fillRect(cx, cy, 1, 1); return; }
-    // Scanline fill via midpoint circle to stay pixel-perfect, no anti-aliasing
-    let x = 0, y = r, d = 1 - r;
-    while (x <= y) {
-      // Fill horizontal spans for all 8 octant pairs
-      ctx.fillRect(cx - y, cy - x, 2 * y + 1, 1);
-      if (x !== 0) ctx.fillRect(cx - y, cy + x, 2 * y + 1, 1);
-      if (x !== y) {
-        ctx.fillRect(cx - x, cy - y, 2 * x + 1, 1);
-        ctx.fillRect(cx - x, cy + y, 2 * x + 1, 1);
-      }
-      if (d < 0) { d += 2 * x + 3; }
-      else       { d += 2 * (x - y) + 5; y--; }
-      x++;
+// 🔄 Undo / Redo
+function redraw() {
+  ctx.fillStyle = "#808080";
+  ctx.fillRect(0, 0, width, height);
+
+  for (const s of strokes) {
+    for (const p of s.points) {
+      drawCircle(p.x, p.y, s.size, s.erase);
     }
   }
+}
 
-  // --- Bresenham stroke: stamps a circle at every pixel along the line ---
-  function line(x0, y0, x1, y1) {
-    const r = Math.max(0, Math.round((sizes[tool] * dpr) / 2));
-    x0 = Math.round(x0 * dpr); y0 = Math.round(y0 * dpr);
-    x1 = Math.round(x1 * dpr); y1 = Math.round(y1 * dpr);
-    const dx = Math.abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
-    const dy = -Math.abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
-    let err = dx + dy;
-    while (true) {
-      stampCircle(x0, y0, r);
-      if (x0 === x1 && y0 === y1) break;
-      const e2 = 2 * err;
-      if (e2 >= dy) { err += dy; x0 += sx; }
-      if (e2 <= dx) { err += dx; y0 += sy; }
-    }
-  }
+function undo() {
+  if (!strokes.length) return;
+  redoStack.push(strokes.pop());
+  redraw();
+}
 
-  // --- Undo / Redo history (up to 40 snapshots each) ---
-  const MAX_UNDO = 40;
-  const history = [];
-  const redoStack = [];
-  let pendingSnapshot = false;
+function redo() {
+  if (!redoStack.length) return;
+  strokes.push(redoStack.pop());
+  redraw();
+}
 
-  function saveSnapshot() {
-    history.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
-    if (history.length > MAX_UNDO) history.shift();
-    redoStack.length = 0;
-  }
-
-  function undo() {
-    if (!history.length) return;
-    redoStack.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
-    ctx.putImageData(history.pop(), 0, 0);
-    setColor();
-  }
-
-  function redo() {
-    if (!redoStack.length) return;
-    history.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
-    ctx.putImageData(redoStack.pop(), 0, 0);
-    setColor();
-  }
-
-  // --- Pointer handling (stylus/mouse only) ---
-  let lastX = 0, lastY = 0, isDown = false;
-
-  function pointerDown(e) {
-    if (e.pointerType === 'touch') return;
-    if (e.pointerType === 'pen' && e.pressure === 0) return;
-    e.preventDefault();
-    canvas.setPointerCapture(e.pointerId);
-    isDown = true;
-    lastX = e.clientX; lastY = e.clientY;
-    // Snapshot the canvas before this stroke begins.
-    // Using rAF defers the getImageData read until the GPU has finished
-    // the previous frame, avoiding a pipeline stall on touch-down.
-    if (!pendingSnapshot) {
-      pendingSnapshot = true;
-      requestAnimationFrame(() => {
-        if (history.length === 0 || isDown) saveSnapshot();
-        pendingSnapshot = false;
-      });
-    }
-    stampCircle(Math.round(lastX * dpr), Math.round(lastY * dpr),
-                Math.max(0, Math.round((sizes[tool] * dpr) / 2)));
-  }
-
-  function pointerMove(e) {
-    if (!isDown) return;
-    if (e.pointerType === 'pen' && e.pressure === 0) { isDown = false; return; }
-    e.preventDefault();
-    const evts = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
-    for (const ev of evts) {
-      line(lastX, lastY, ev.clientX, ev.clientY);
-      lastX = ev.clientX; lastY = ev.clientY;
-    }
-  }
-
-  function pointerUp(e) {
-    if (e.pointerType === 'touch') return;
-    isDown = false;
-  }
-
-  canvas.addEventListener('pointerdown',   pointerDown, { passive: false });
-  canvas.addEventListener('pointermove',   pointerMove, { passive: false });
-  canvas.addEventListener('pointerup',     pointerUp,   { passive: false });
-  canvas.addEventListener('pointercancel', pointerUp,   { passive: false });
-
-  // --- Two-finger tap → undo / Three-finger tap → redo ---
-  // Fingers don't always land simultaneously, so we track the peak count
-  // across a 400ms window and act when all fingers lift.
-  const activeTouches = new Map();
-  let tapFingerCount = 0;
-  let tapWindowOpen = false;
-  let tapTimer = null;
-  let tapCancelled = false;
-
-  canvas.addEventListener('touchstart', e => {
-    e.preventDefault();
-    for (const t of e.changedTouches) {
-      activeTouches.set(t.identifier, { x: t.clientX, y: t.clientY });
-    }
-    tapFingerCount = Math.max(tapFingerCount, activeTouches.size);
-
-    if (!tapWindowOpen) {
-      tapWindowOpen = true;
-      tapCancelled = false;
-      clearTimeout(tapTimer);
-      tapTimer = setTimeout(() => {
-        tapCancelled = true;
-        tapWindowOpen = false;
-      }, 400);
-    }
-  }, { passive: false });
-
-  canvas.addEventListener('touchmove', e => {
-    e.preventDefault();
-    for (const t of e.changedTouches) {
-      const start = activeTouches.get(t.identifier);
-      if (start) {
-        const dx = t.clientX - start.x, dy = t.clientY - start.y;
-        if (dx*dx + dy*dy > 144) tapCancelled = true; // 12px threshold
-      }
-    }
-  }, { passive: false });
-
-  canvas.addEventListener('touchend', e => {
-    e.preventDefault();
-    for (const t of e.changedTouches) activeTouches.delete(t.identifier);
-    if (activeTouches.size === 0) {
-      clearTimeout(tapTimer); tapTimer = null; tapWindowOpen = false;
-      if (!tapCancelled) {
-        if      (tapFingerCount === 2) undo();
-        else if (tapFingerCount >= 3)  redo();
-      }
-      tapFingerCount = 0;
-      tapCancelled = false;
-    }
-  }, { passive: false });
-
-  canvas.addEventListener('touchcancel', e => {
-    for (const t of e.changedTouches) activeTouches.delete(t.identifier);
-    clearTimeout(tapTimer); tapTimer = null;
-    tapFingerCount = 0; tapCancelled = true; tapWindowOpen = false;
-  }, { passive: false });
-
-  // --- X key: toggle tool ---
-  document.addEventListener('keydown', e => {
-    if (e.key === 'x' || e.key === 'X') switchTool(tool === DRAW ? ERASE : DRAW);
-  });
-
-  // --- Tool buttons ---
-  function switchTool(t) {
-    tool = t;
-    setColor();
-    updateSliderUI();
-    document.getElementById('btn-draw').classList.toggle('active',  tool === DRAW);
-    document.getElementById('btn-erase').classList.toggle('active', tool === ERASE);
-  }
-
-  document.getElementById('btn-draw').addEventListener('pointerdown', e => {
-    e.stopPropagation(); switchTool(DRAW);
-  });
-  document.getElementById('btn-erase').addEventListener('pointerdown', e => {
-    e.stopPropagation(); switchTool(ERASE);
-  });
-
-  // --- Custom slider ---
-  const sizerEl   = document.getElementById('sizer');
-  const track     = document.getElementById('sizer-track');
-  const fill      = document.getElementById('sizer-fill');
-  const thumb     = document.getElementById('sizer-thumb');
-  const MIN_SIZE  = 1, MAX_SIZE = 700;
-
-  // Normalised position 0–1 per tool (persists across tool switches)
-  const sliderT = [0, 0];
-
-  function tToSize(t) {
-    const logMin = Math.log(MIN_SIZE), logMax = Math.log(MAX_SIZE);
-    return Math.round(Math.exp(logMin + t * (logMax - logMin)));
-  }
-
-  function updateSliderUI() {
-    const t = sliderT[tool];
-    const trackH = track.getBoundingClientRect().height;
-    const fillH = t * trackH;
-    fill.style.height  = fillH + 'px';
-    thumb.style.bottom = fillH + 'px';
-    sizes[tool] = tToSize(t);
-  }
-
-  function tFromY(clientY) {
-    const rect = track.getBoundingClientRect();
-    let t = 1 - (clientY - rect.top) / rect.height;
-    return Math.max(0, Math.min(1, t));
-  }
-
-  let sliderActive = false;
-  let dragStartY = 0, dragStartT = 0;
-
-  sizerEl.addEventListener('pointerdown', e => {
-    e.stopPropagation();
-    sliderActive = true;
-    sizerEl.setPointerCapture(e.pointerId);
-    // Record where the finger landed and what t was — drag is relative from here
-    dragStartY = e.clientY;
-    dragStartT = sliderT[tool];
-  });
-  sizerEl.addEventListener('pointermove', e => {
-    e.stopPropagation();
-    if (!sliderActive) return;
-    const trackH = track.getBoundingClientRect().height;
-    const delta = -(e.clientY - dragStartY) / trackH; // upward = positive
-    sliderT[tool] = Math.max(0, Math.min(1, dragStartT + delta));
-    updateSliderUI();
-  });
-  sizerEl.addEventListener('pointerup',     e => { e.stopPropagation(); sliderActive = false; });
-  sizerEl.addEventListener('pointercancel', e => { e.stopPropagation(); sliderActive = false; });
-
-  document.addEventListener('contextmenu',   e => e.preventDefault());
-  document.addEventListener('gesturestart',  e => e.preventDefault());
-  document.addEventListener('gesturechange', e => e.preventDefault());
-
-  window.addEventListener('resize', () => { resize(); updateSliderUI(); });
-  resize();
-  updateSliderUI();
-  // Seed blank canvas as first undo state, deferred so GPU has painted first
-  requestAnimationFrame(() => saveSnapshot());
-})();
+// 👆 Touch gestures (approximation)
+canvas.addEventListener("touchstart", e => {
+  if (e.touches.length === 2) undo();
+  if (e.touches.length === 3) redo();
+});
 </script>
 
 </body>
