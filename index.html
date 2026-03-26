@@ -227,38 +227,48 @@
   const track     = document.getElementById('sizer-track');
   const fill      = document.getElementById('sizer-fill');
   const thumb     = document.getElementById('sizer-thumb');
-  const MIN_SIZE  = 1, MAX_SIZE = 1000;
+  const MIN_SIZE  = 1, MAX_SIZE = 700;
 
-  function updateSliderUI() {
-    const trackH = track.getBoundingClientRect().height;
-    const t = (sizes[tool] - MIN_SIZE) / (MAX_SIZE - MIN_SIZE);
-    const fillH = t * trackH;
-    fill.style.height  = fillH + 'px';
-    thumb.style.bottom = fillH + 'px';
-  }
+  // Normalised position 0–1 per tool (persists across tool switches)
+  const sliderT = [0, 0];
 
-  function sizeFromY(clientY) {
-    const rect = track.getBoundingClientRect();
-    let t = 1 - (clientY - rect.top) / rect.height;
-    t = Math.max(0, Math.min(1, t));
-    // Logarithmic mapping so small sizes are easy to hit
+  function tToSize(t) {
     const logMin = Math.log(MIN_SIZE), logMax = Math.log(MAX_SIZE);
     return Math.round(Math.exp(logMin + t * (logMax - logMin)));
   }
 
+  function updateSliderUI() {
+    const t = sliderT[tool];
+    const trackH = track.getBoundingClientRect().height;
+    const fillH = t * trackH;
+    fill.style.height  = fillH + 'px';
+    thumb.style.bottom = fillH + 'px';
+    sizes[tool] = tToSize(t);
+  }
+
+  function tFromY(clientY) {
+    const rect = track.getBoundingClientRect();
+    let t = 1 - (clientY - rect.top) / rect.height;
+    return Math.max(0, Math.min(1, t));
+  }
+
   let sliderActive = false;
+  let dragStartY = 0, dragStartT = 0;
 
   sizerEl.addEventListener('pointerdown', e => {
     e.stopPropagation();
     sliderActive = true;
     sizerEl.setPointerCapture(e.pointerId);
-    sizes[tool] = sizeFromY(e.clientY);
-    updateSliderUI();
+    // Record where the finger landed and what t was — drag is relative from here
+    dragStartY = e.clientY;
+    dragStartT = sliderT[tool];
   });
   sizerEl.addEventListener('pointermove', e => {
     e.stopPropagation();
     if (!sliderActive) return;
-    sizes[tool] = sizeFromY(e.clientY);
+    const trackH = track.getBoundingClientRect().height;
+    const delta = -(e.clientY - dragStartY) / trackH; // upward = positive
+    sliderT[tool] = Math.max(0, Math.min(1, dragStartT + delta));
     updateSliderUI();
   });
   sizerEl.addEventListener('pointerup',     e => { e.stopPropagation(); sliderActive = false; });
