@@ -177,11 +177,12 @@
   const MAX_UNDO = 40;
   const history = [];
   const redoStack = [];
+  let pendingSnapshot = false;
 
   function saveSnapshot() {
     history.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
     if (history.length > MAX_UNDO) history.shift();
-    redoStack.length = 0; // new stroke clears redo
+    redoStack.length = 0;
   }
 
   function undo() {
@@ -208,6 +209,16 @@
     canvas.setPointerCapture(e.pointerId);
     isDown = true;
     lastX = e.clientX; lastY = e.clientY;
+    // Snapshot the canvas before this stroke begins.
+    // Using rAF defers the getImageData read until the GPU has finished
+    // the previous frame, avoiding a pipeline stall on touch-down.
+    if (!pendingSnapshot) {
+      pendingSnapshot = true;
+      requestAnimationFrame(() => {
+        if (history.length === 0 || isDown) saveSnapshot();
+        pendingSnapshot = false;
+      });
+    }
     stampCircle(Math.round(lastX * dpr), Math.round(lastY * dpr),
                 Math.max(0, Math.round((sizes[tool] * dpr) / 2)));
   }
@@ -225,7 +236,6 @@
 
   function pointerUp(e) {
     if (e.pointerType === 'touch') return;
-    if (isDown) saveSnapshot(); // readback after stroke ends — never blocks a new stroke
     isDown = false;
   }
 
@@ -372,6 +382,8 @@
   window.addEventListener('resize', () => { resize(); updateSliderUI(); });
   resize();
   updateSliderUI();
+  // Seed blank canvas as first undo state, deferred so GPU has painted first
+  requestAnimationFrame(() => saveSnapshot());
 })();
 </script>
 
