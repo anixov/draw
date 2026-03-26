@@ -40,10 +40,37 @@
   }
   .tool-btn.active { border-color: #fff; }
   .tool-btn svg { pointer-events: none; }
+  #sizer {
+    position: fixed;
+    right: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  #sizer input[type=range] {
+    writing-mode: vertical-lr;
+    direction: rtl;
+    -webkit-appearance: slider-vertical;
+    appearance: slider-vertical;
+    width: 28px;
+    height: 180px;
+    cursor: pointer;
+    accent-color: #fff;
+    opacity: 0.7;
+  }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
+<div id="sizer">
+  <input type="range" id="slider" min="1" max="64" value="1" step="1">
+</div>
 <div id="toolbar">
   <button class="tool-btn active" id="btn-draw" title="Draw" aria-label="Draw">
     <svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -70,6 +97,9 @@
   const DRAW = 0, ERASE = 1;
   let tool = DRAW;
   let dpr = 1;
+  // Independent size per tool (in CSS pixels)
+  const sizes = [1, 1];
+  const slider = document.getElementById('slider');
 
   // Work entirely in device pixels — no ctx transform, no scale()
   // Convert CSS coords to device pixels inline (single multiply, no matrix math)
@@ -93,16 +123,17 @@
     ctx.fillStyle = tool === DRAW ? '#000000' : '#808080';
   }
 
-  // Bresenham in device pixels
+  // Bresenham in device pixels, drawing sz×sz squares
   function line(x0, y0, x1, y1) {
-    // Convert CSS → device pixels
-    x0 = Math.round(x0 * dpr); y0 = Math.round(y0 * dpr);
-    x1 = Math.round(x1 * dpr); y1 = Math.round(y1 * dpr);
+    const sz = Math.max(1, Math.round(sizes[tool] * dpr));
+    const off = sz >> 1; // offset to centre the square on the cursor
+    x0 = Math.round(x0 * dpr) - off; y0 = Math.round(y0 * dpr) - off;
+    x1 = Math.round(x1 * dpr) - off; y1 = Math.round(y1 * dpr) - off;
     const dx = Math.abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
     const dy = -Math.abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
     let err = dx + dy;
     while (true) {
-      ctx.fillRect(x0, y0, 1, 1);
+      ctx.fillRect(x0, y0, sz, sz);
       if (x0 === x1 && y0 === y1) break;
       const e2 = 2 * err;
       if (e2 >= dy) { err += dy; x0 += sx; }
@@ -115,10 +146,12 @@
   function pointerDown(e) {
     if (e.pointerType === 'touch') return;
     e.preventDefault();
-    canvas.setPointerCapture(e.pointerId); // lock events to canvas, no hit-test delay
+    canvas.setPointerCapture(e.pointerId);
     isDown = true;
     lastX = e.clientX; lastY = e.clientY;
-    ctx.fillRect(Math.round(lastX * dpr), Math.round(lastY * dpr), 1, 1);
+    const sz = Math.max(1, Math.round(sizes[tool] * dpr));
+    const off = sz >> 1;
+    ctx.fillRect(Math.round(lastX * dpr) - off, Math.round(lastY * dpr) - off, sz, sz);
   }
 
   function pointerMove(e) {
@@ -141,21 +174,27 @@
   canvas.addEventListener('pointerup',     pointerUp,   { passive: false });
   canvas.addEventListener('pointercancel', pointerUp,   { passive: false });
 
-  const btnDraw  = document.getElementById('btn-draw');
-  const btnErase = document.getElementById('btn-erase');
+  function switchTool(t) {
+    tool = t;
+    setColor();
+    slider.value = sizes[tool];
+    document.getElementById('btn-draw').classList.toggle('active', tool === DRAW);
+    document.getElementById('btn-erase').classList.toggle('active', tool === ERASE);
+  }
 
-  btnDraw.addEventListener('pointerdown', e => {
-    e.stopPropagation();
-    tool = DRAW; setColor();
-    btnDraw.classList.add('active');
-    btnErase.classList.remove('active');
+  document.getElementById('btn-draw').addEventListener('pointerdown', e => {
+    e.stopPropagation(); switchTool(DRAW);
   });
-  btnErase.addEventListener('pointerdown', e => {
-    e.stopPropagation();
-    tool = ERASE; setColor();
-    btnErase.classList.add('active');
-    btnDraw.classList.remove('active');
+  document.getElementById('btn-erase').addEventListener('pointerdown', e => {
+    e.stopPropagation(); switchTool(ERASE);
   });
+
+  slider.addEventListener('input', () => {
+    sizes[tool] = parseInt(slider.value, 10);
+  });
+  // Prevent slider interaction from reaching the canvas
+  slider.addEventListener('pointerdown', e => e.stopPropagation());
+  slider.addEventListener('pointermove', e => e.stopPropagation());
 
   document.addEventListener('contextmenu',  e => e.preventDefault());
   document.addEventListener('gesturestart', e => e.preventDefault());
