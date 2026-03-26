@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-fullscreen">
+<title>Draw</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #808080; touch-action: none; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+  #toolbar {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 12px;
+    background: rgba(0,0,0,0.55);
+    border-radius: 40px;
+    padding: 8px 16px;
+    align-items: center;
+    user-select: none;
+    -webkit-user-select: none;
+    z-index: 10;
+  }
+  .tool-btn {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: border-color 0.1s;
+    -webkit-tap-highlight-color: transparent;
+    background: none;
+    padding: 0;
+  }
+  .tool-btn.active { border-color: #fff; }
+  .tool-btn svg { pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="toolbar">
+  <button class="tool-btn active" id="btn-draw" title="Draw" aria-label="Draw">
+    <svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M3 19L7.5 14.5M7.5 14.5L16.5 5.5C17.3 4.7 18.5 4.7 19.3 5.5C20.1 6.3 20.1 7.5 19.3 8.3L10.3 17.3L7.5 14.5Z" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  </button>
+  <button class="tool-btn" id="btn-erase" title="Erase" aria-label="Erase">
+    <svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="3" y="10" width="10" height="8" rx="1" stroke="white" stroke-width="1.6"/>
+      <path d="M3 18h16M13 10l6-6M13 14l6-6" stroke="white" stroke-width="1.6" stroke-linecap="round"/>
+    </svg>
+  </button>
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d', { willReadFrequently: false, alpha: false });
+
+  // Tools
+  const DRAW  = 0;
+  const ERASE = 1;
+  let tool = DRAW;
+
+  // Resize: match device pixels exactly
+  function resize() {
+    const dpr = window.devicePixelRatio || 1;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    // Save current drawing
+    let saved = null;
+    if (canvas.width > 0 && canvas.height > 0) {
+      saved = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    }
+    canvas.width  = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+    ctx.scale(dpr, dpr);
+    // Fill background
+    ctx.fillStyle = '#808080';
+    ctx.fillRect(0, 0, w, h);
+    // Restore drawing if any
+    if (saved) ctx.putImageData(saved, 0, 0);
+  }
+
+  // Draw or erase a single 1×1 CSS pixel (which may be multiple device pixels)
+  // We floor to get crisp pixel-aligned marks
+  function mark(x, y) {
+    const px = Math.floor(x);
+    const py = Math.floor(y);
+    ctx.fillStyle = (tool === DRAW) ? '#000000' : '#808080';
+    ctx.fillRect(px, py, 1, 1);
+  }
+
+  // Bresenham line between two points to avoid gaps during fast movement
+  function line(x0, y0, x1, y1) {
+    x0 = Math.floor(x0); y0 = Math.floor(y0);
+    x1 = Math.floor(x1); y1 = Math.floor(y1);
+    const dx = Math.abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+    const dy = -Math.abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+    let err = dx + dy;
+    const color = (tool === DRAW) ? '#000000' : '#808080';
+    ctx.fillStyle = color;
+    while (true) {
+      ctx.fillRect(x0, y0, 1, 1);
+      if (x0 === x1 && y0 === y1) break;
+      const e2 = 2 * err;
+      if (e2 >= dy) { err += dy; x0 += sx; }
+      if (e2 <= dx) { err += dx; y0 += sy; }
+    }
+  }
+
+  // Track last position for line interpolation
+  let lastX = null, lastY = null;
+  let isDown = false;
+
+  function pointerDown(e) {
+    // Only respond to stylus (pen) or mouse; ignore fingers if stylus present
+    if (e.pointerType === 'touch') return;
+    e.preventDefault();
+    isDown = true;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    mark(lastX, lastY);
+  }
+
+  function pointerMove(e) {
+    if (!isDown) return;
+    e.preventDefault();
+    // Use getCoalescedEvents for sub-frame precision if available
+    const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+    for (const ev of events) {
+      line(lastX, lastY, ev.clientX, ev.clientY);
+      lastX = ev.clientX;
+      lastY = ev.clientY;
+    }
+  }
+
+  function pointerUp(e) {
+    if (e.pointerType === 'touch') return;
+    isDown = false;
+    lastX = null;
+    lastY = null;
+  }
+
+  canvas.addEventListener('pointerdown', pointerDown, { passive: false });
+  canvas.addEventListener('pointermove', pointerMove, { passive: false });
+  canvas.addEventListener('pointerup',   pointerUp,   { passive: false });
+  canvas.addEventListener('pointerout',  pointerUp,   { passive: false });
+  canvas.addEventListener('pointercancel', pointerUp, { passive: false });
+
+  // Toolbar
+  const btnDraw  = document.getElementById('btn-draw');
+  const btnErase = document.getElementById('btn-erase');
+
+  btnDraw.addEventListener('pointerdown', function(e) {
+    e.stopPropagation();
+    tool = DRAW;
+    btnDraw.classList.add('active');
+    btnErase.classList.remove('active');
+  });
+
+  btnErase.addEventListener('pointerdown', function(e) {
+    e.stopPropagation();
+    tool = ERASE;
+    btnErase.classList.add('active');
+    btnDraw.classList.remove('active');
+  });
+
+  // Prevent context menu and default gestures
+  document.addEventListener('contextmenu', e => e.preventDefault());
+  document.addEventListener('gesturestart', e => e.preventDefault());
+  document.addEventListener('gesturechange', e => e.preventDefault());
+
+  // Init
+  window.addEventListener('resize', resize);
+  resize();
+})();
+</script>
+</body>
+</html>
