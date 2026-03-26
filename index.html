@@ -203,20 +203,17 @@
 
   function pointerDown(e) {
     if (e.pointerType === 'touch') return;
-    // Stylus proximity events have pressure 0 — ignore until actual contact
     if (e.pointerType === 'pen' && e.pressure === 0) return;
     e.preventDefault();
     canvas.setPointerCapture(e.pointerId);
     isDown = true;
     lastX = e.clientX; lastY = e.clientY;
-    saveSnapshot();
     stampCircle(Math.round(lastX * dpr), Math.round(lastY * dpr),
                 Math.max(0, Math.round((sizes[tool] * dpr) / 2)));
   }
 
   function pointerMove(e) {
     if (!isDown) return;
-    // Also guard mid-stroke if pressure drops to 0 (hover after lift)
     if (e.pointerType === 'pen' && e.pressure === 0) { isDown = false; return; }
     e.preventDefault();
     const evts = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
@@ -228,6 +225,7 @@
 
   function pointerUp(e) {
     if (e.pointerType === 'touch') return;
+    if (isDown) saveSnapshot(); // readback after stroke ends — never blocks a new stroke
     isDown = false;
   }
 
